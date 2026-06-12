@@ -8,6 +8,7 @@ using Unicode
 using InlineTest
 using KiwiConstraintSolver
 using Tables
+import UnicodePlots
 
 const TUI = TerminalUserInterfaces
 
@@ -28,6 +29,7 @@ include("widgets/grid.jl")
 include("widgets/list.jl")
 include("widgets/markdown.jl")
 include("widgets/paragraph.jl")
+include("widgets/plot.jl")
 include("widgets/progressbar.jl")
 include("widgets/scrollbar.jl")
 include("widgets/table.jl")

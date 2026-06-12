@@ -23,3 +23,8 @@ Type "q"
 ### progressbar.jl
 
 ![](https://user-images.githubusercontent.com/1813121/273422166-fe14909f-61f3-4595-9006-1c32f64b5869.gif)
+
+### unicodeplot.jl
+
+Run with `julia --project=. examples/unicodeplot.jl`. Scroll over the plot to zoom, press `r`
+to reset zoom, and press `q` to quit.

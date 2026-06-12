@@ -18,6 +18,15 @@ update!(::Model) = @info "No update"
 function update!(m::Model, evt::ResizeEvent)
   update!(terminal(m), evt)
 end
+
+function update!(m::Model, evt::MouseEvent)
+  handled = false
+  for w in views(m)
+    handled |= handle_event!(w, evt)
+  end
+  handled || update!(m)
+end
+
 views(m::Model) = [view(m)]
 view(::Model) = @debug "No view found for model"
 should_quit(m::Model) = m.quit
@@ -27,8 +36,8 @@ render(m::Model, r::Rect, buf::Buffer) =
     render(w, r, buf)
   end
 
-function app(m; wait = 1 / 30)
-  tui() do
+function app(m; wait = 1 / 30, tui_kwargs...)
+  tui(; tui_kwargs...) do
     @debug "Creating terminal"
     t = Terminal(; wait)
     init!(m, t)
