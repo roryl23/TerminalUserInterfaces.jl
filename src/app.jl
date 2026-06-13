@@ -19,10 +19,23 @@ function update!(m::Model, evt::ResizeEvent)
   update!(terminal(m), evt)
 end
 
+function _event_area(m::Model)
+  try
+    return area(terminal(m))
+  catch err
+    err isa UndefRefError && return nothing
+    rethrow()
+  end
+end
+
+_handle_event_with_area!(widget, evt, ::Nothing) = handle_event!(widget, evt)
+_handle_event_with_area!(widget, evt, area::Rect) = handle_event!(widget, evt, area)
+
 function update!(m::Model, evt::MouseEvent)
   handled = false
+  view_area = _event_area(m)
   for w in views(m)
-    handled |= handle_event!(w, evt)
+    handled |= _handle_event_with_area!(w, evt, view_area)
   end
   handled || update!(m)
 end

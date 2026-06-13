@@ -79,6 +79,53 @@ end
 _plot_zoom_axes(axis::Symbol) = (axis,)
 _plot_zoom_axes(axes) = Tuple(Symbol(axis) for axis in axes)
 
+_plot_exp2(x) = 2.0^x
+_plot_exp10(x) = 10.0^x
+
+function _plot_scale_pair(scale)
+  scale === :identity && return (identity, identity)
+  scale === :ln && return (log, exp)
+  scale === :log2 && return (log2, _plot_exp2)
+  scale === :log10 && return (log10, _plot_exp10)
+  scale === identity && return (identity, identity)
+  scale === log && return (log, exp)
+  scale === log2 && return (log2, _plot_exp2)
+  scale === log10 && return (log10, _plot_exp10)
+  return nothing
+end
+
+function _plot_axis_scale(plot::UnicodePlot, axis::Symbol)
+  key = axis == :x ? :xscale : :yscale
+  return get(plot.kwargs, key, :identity)
+end
+
+function _map_plot_limit(limit, transform)
+  lo, hi = limit
+  try
+    lo = Float64(transform(lo))
+    hi = Float64(transform(hi))
+  catch
+    return nothing
+  end
+
+  isfinite(lo) && isfinite(hi) && lo < hi || return nothing
+  return (lo, hi)
+end
+
+function _scale_plot_limit(limit, scale)
+  pair = _plot_scale_pair(scale)
+  pair === nothing && return nothing
+  forward, _ = pair
+  return _map_plot_limit(limit, forward)
+end
+
+function _unscale_plot_limit(limit, scale)
+  pair = _plot_scale_pair(scale)
+  pair === nothing && return nothing
+  _, inverse = pair
+  return _map_plot_limit(limit, inverse)
+end
+
 function _plot_target_size(plot::UnicodePlot, area::Rect)
   target_width = plot.width === nothing ? width(area) : min(width(area), plot.width)
   target_height = plot.height === nothing ? height(area) : min(height(area), plot.height)
@@ -130,14 +177,28 @@ function _remember_plot_limits!(plot::UnicodePlot, rendered_plot)
 
   origin_x = _float_property(graphics, :origin_x)
   plot_width = _float_property(graphics, :width)
-  if plot.base_xlim === nothing && origin_x !== nothing && plot_width !== nothing && plot_width > 0
-    plot.base_xlim = (origin_x, origin_x + plot_width)
-  end
+  _remember_axis_limit!(plot, :x, origin_x, plot_width)
 
   origin_y = _float_property(graphics, :origin_y)
   plot_height = _float_property(graphics, :height)
-  if plot.base_ylim === nothing && origin_y !== nothing && plot_height !== nothing && plot_height > 0
-    plot.base_ylim = (origin_y, origin_y + plot_height)
+  _remember_axis_limit!(plot, :y, origin_y, plot_height)
+
+  return plot
+end
+
+function _remember_axis_limit!(plot::UnicodePlot, axis::Symbol, origin, size)
+  axis == :x && plot.base_xlim !== nothing && return plot
+  axis == :y && plot.base_ylim !== nothing && return plot
+  origin !== nothing && size !== nothing && size > 0 || return plot
+
+  scale = _plot_axis_scale(plot, axis)
+  limit = _unscale_plot_limit((origin, origin + size), scale)
+  limit === nothing && return plot
+
+  if axis == :x
+    plot.base_xlim = limit
+  else
+    plot.base_ylim = limit
   end
 
   return plot
@@ -213,7 +274,7 @@ function render(plot::UnicodePlots.Plot, area::Rect, buf::Buffer)
 end
 
 function handle_event!(plot::UnicodePlot, evt::MouseEvent, area::Rect)
-  plot.last_area = area
+  plot.last_area = inner(plot.block, area)
   return handle_event!(plot, evt)
 end
 
@@ -237,13 +298,29 @@ function zoom!(plot::UnicodePlot, direction::Symbol = :in; position = nothing)
   changed = false
 
   if :x in plot.zoom_axes
-    next_xlim = _zoom_limit(plot.xlim, plot.base_xlim, x_fraction, zoom_in, plot.zoom_step, plot.max_zoom)
+    next_xlim = _zoom_limit(
+      plot.xlim,
+      plot.base_xlim,
+      x_fraction,
+      zoom_in,
+      plot.zoom_step,
+      plot.max_zoom,
+      _plot_axis_scale(plot, :x),
+    )
     changed |= next_xlim != plot.xlim
     plot.xlim = next_xlim
   end
 
   if :y in plot.zoom_axes
-    next_ylim = _zoom_limit(plot.ylim, plot.base_ylim, y_fraction, zoom_in, plot.zoom_step, plot.max_zoom)
+    next_ylim = _zoom_limit(
+      plot.ylim,
+      plot.base_ylim,
+      y_fraction,
+      zoom_in,
+      plot.zoom_step,
+      plot.max_zoom,
+      _plot_axis_scale(plot, :y),
+    )
     changed |= next_ylim != plot.ylim
     plot.ylim = next_ylim
   end
@@ -257,16 +334,30 @@ function reset_zoom!(plot::UnicodePlot)
   return plot
 end
 
-function _zoom_limit(current, base, fraction::Float64, zoom_in::Bool, zoom_step::Float64, max_zoom::Float64)
+function _zoom_limit(current, base, fraction::Float64, zoom_in::Bool, zoom_step::Float64, max_zoom::Float64, scale)
   limit = current === nothing ? base : current
   limit === nothing && return current
 
+  scaled_limit = _scale_plot_limit(limit, scale)
+  scaled_limit === nothing && return current
+  scaled_base = base === nothing ? nothing : _scale_plot_limit(base, scale)
+  base !== nothing && scaled_base === nothing && return current
+
+  next_limit = _zoom_linear_limit(scaled_limit, scaled_base, fraction, zoom_in, zoom_step, max_zoom)
+  next_limit === scaled_limit && return current
+
+  unscaled_limit = _unscale_plot_limit(next_limit, scale)
+  unscaled_limit === nothing && return current
+  return unscaled_limit
+end
+
+function _zoom_linear_limit(limit, base, fraction::Float64, zoom_in::Bool, zoom_step::Float64, max_zoom::Float64)
   lo, hi = limit
   span = hi - lo
-  span > 0 || return current
+  span > 0 || return limit
 
   base_span = base === nothing ? span : base[2] - base[1]
-  base_span > 0 || return current
+  base_span > 0 || return limit
 
   next_span = zoom_in ? span / zoom_step : span * zoom_step
   next_span = clamp(next_span, base_span / max_zoom, base_span)
@@ -344,4 +435,49 @@ end
   @test handle_event!(plot, evt)
   @test plot.xlim !== nothing
   @test plot.xlim[2] - plot.xlim[1] < base_xlim[2] - base_xlim[1]
+end
+
+@testset "unicode-plot-mouse-wheel-zooms-in-rebuilt-layout" begin
+  plot = UnicodePlot(UnicodePlots.lineplot, 1:5, [1, 4, 9, 16, 25]; width = 30, height = 10)
+  buf = Buffer(Rect(1, 1, 30, 10))
+  render(Layout(; widgets = [plot], constraints = [Min(1)]), Rect(1, 1, 30, 10), buf)
+
+  base_xlim = plot.base_xlim
+  rebuilt_layout = Layout(; widgets = [plot], constraints = [Min(1)])
+  evt = Crossterm.Event{Crossterm.MouseEvent}(
+    Crossterm.EventTag.MOUSE,
+    Crossterm.MouseEvent("ScrollUp", 14, 4, String[]),
+  )
+
+  @test handle_event!(rebuilt_layout, evt)
+  @test plot.xlim !== nothing
+  @test plot.xlim[2] - plot.xlim[1] < base_xlim[2] - base_xlim[1]
+end
+
+@testset "unicode-plot-log-scale-mouse-wheel-zooms-in-data-space" begin
+  xs = 1.0:100.0
+  plot = UnicodePlot(
+    UnicodePlots.lineplot,
+    collect(xs),
+    collect(xs);
+    width = 40,
+    height = 12,
+    xscale = :log10,
+    yscale = :log10,
+  )
+  buf = Buffer(Rect(1, 1, 40, 12))
+  render(plot, Rect(1, 1, 40, 12), buf)
+
+  @test plot.base_xlim[1] ≈ 1.0
+  @test plot.base_xlim[2] ≈ 100.0
+
+  evt = Crossterm.Event{Crossterm.MouseEvent}(
+    Crossterm.EventTag.MOUSE,
+    Crossterm.MouseEvent("ScrollUp", 20, 5, String[]),
+  )
+
+  @test handle_event!(plot, evt)
+  @test plot.xlim[1] > 1.0
+  @test plot.xlim[2] < 100.0
+  @test plot.xlim[2] > 10.0
 end

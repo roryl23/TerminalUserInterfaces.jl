@@ -24,7 +24,13 @@ function render(layout::Layout, area::Rect, buf::Buffer)
 end
 
 function handle_event!(layout::Layout, evt)
-  isnothing(layout.last_area[]) && return false
+  if isnothing(layout.last_area[])
+    handled = false
+    for widget in layout.widgets
+      handled |= handle_event!(widget, evt)
+    end
+    return handled
+  end
   handle_event!(layout, evt, layout.last_area[])
 end
 
